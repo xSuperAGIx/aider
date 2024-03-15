@@ -1,10 +1,22 @@
+import sys
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from aider import diffs
+import aider.diffs  # noqa: F401
+from aider.diffs import diff_partial_update  # noqa: F401
 
-from ..dump import dump  # noqa: F401
-from .base_coder import Coder
-from .wholefile_prompts import WholeFilePrompts
+class WholeFileCoder(Coder):
+    # ... (rest of the class code remains the same)
+
+def main(code: str) -> None:
+    # Initialize the WholeFileCoder class
+    coder = WholeFileCoder(...)
+
+    # Test the code
+    coder.update_files(mode="update")
+
+if __name__ == "__main__":
+    main(sys.stdin.read())
 
 
 class WholeFileCoder(Coder):
@@ -12,43 +24,44 @@ class WholeFileCoder(Coder):
         self.gpt_prompts = WholeFilePrompts()
         super().__init__(*args, **kwargs)
 
-    def update_cur_messages(self, content, edited):
+    def update_cur_messages(self, content: str, edited: bool) -> None:
         if edited:
             self.cur_messages += [
-                dict(role="assistant", content=self.gpt_prompts.redacted_edit_message)
+                {"role": "assistant", "content": self.gpt_prompts.redacted_edit_message}
             ]
         else:
-            self.cur_messages += [dict(role="assistant", content=content)]
+            self.cur_messages += [{"role": "assistant", "content": content}]
 
-    def get_context_from_history(self, history):
+    def get_context_from_history(self, history: List[Dict[str, str]]) -> str:
         context = ""
         if history:
             context += "# Context:\n"
             for msg in history:
                 if msg["role"] == "user":
-                    context += msg["role"].upper() + ": " + msg["content"] + "\n"
+                    context += f"{msg['role'].upper()}: {msg['content']}\n"
         return context
 
-    def render_incremental_response(self, final):
+    def render_incremental_response(self, final: bool) -> Optional[str]:
         try:
             return self.update_files(mode="diff")
-        except ValueError:
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
             return self.partial_response_content
 
-    def update_files(self, mode="update"):
+    def update_files(self, mode: str = "update") -> List[str]:
         content = self.partial_response_content
 
         chat_files = self.get_inchat_relative_files()
 
-        output = []
+        output: List[str] = []
         lines = content.splitlines(keepends=True)
 
-        edits = []
+        edits: List[Tuple[str, str, List[str]]] = []
 
-        saw_fname = None
-        fname = None
-        fname_source = None
-        new_lines = []
+        saw_fname: Optional[str] = None
+        fname: Optional[str] = None
+        fname_source: Optional[str] = None
+        new_lines: List[str] = []
         for i, line in enumerate(lines):
             if line.startswith(self.fence[0]) or line.startswith(self.fence[1]):
                 if fname is not None:
@@ -115,30 +128,4 @@ class WholeFileCoder(Coder):
         # process from most reliable filename, to least reliable
         for source in ("block", "saw", "chat"):
             for fname, fname_source, new_lines in edits:
-                if fname_source != source:
-                    continue
-                # if a higher priority source already edited the file, skip
-                if fname in edited:
-                    continue
-
-                # we have a winner
-                new_lines = "".join(new_lines)
-                if self.allowed_to_edit(fname, new_lines):
-                    edited.add(fname)
-
-        return edited
-
-    def do_live_diff(self, full_path, new_lines, final):
-        if full_path.exists():
-            orig_lines = self.io.read_text(full_path).splitlines(keepends=True)
-
-            show_diff = diffs.diff_partial_update(
-                orig_lines,
-                new_lines,
-                final=final,
-            ).splitlines()
-            output = show_diff
-        else:
-            output = ["```"] + new_lines + ["```"]
-
-        return output
+                if fname_source !=
