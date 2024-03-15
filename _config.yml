@@ -1,9 +1,10 @@
-theme: jekyll-theme-cayman
-url: "https://aider.chat"
+# _config.yml
 
-defaults:
-  - scope:
-      path: "README.md"
-      type: "pages"
-    values:
-      description: "A command-line chat tool for coding with GPT"
+# Use a more specific theme, such as the one you've mentioned with additional customization.
+theme: jekyll-theme-cayman
+theme_config:
+  # Add your customization here, e.g., navigation links, logo, etc.
+  navigation:
+    - title: "Home"
+      url: "/"
+
