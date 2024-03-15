@@ -1,15 +1,25 @@
 import difflib
 import sys
+from pathlib import Path
 
 from .dump import dump  # noqa: F401
 
 
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python diffs.py file1 file")
+        print("Usage: python diffs.py file1 file2")
         sys.exit(1)
 
-    file_orig, file_updated = sys.argv[1], sys.argv[2]
+    file_orig = Path(sys.argv[1])
+    file_updated = Path(sys.argv[2])
+
+    if not file_orig.exists():
+        print(f"Error: File '{file_orig}' does not exist.")
+        sys.exit(1)
+
+    if not file_updated.exists():
+        print(f"Error: File '{file_updated}' does not exist.")
+        sys.exit(1)
 
     with open(file_orig, "r", encoding="utf-8") as f:
         lines_orig = f.readlines()
@@ -17,10 +27,25 @@ def main():
     with open(file_updated, "r", encoding="utf-8") as f:
         lines_updated = f.readlines()
 
-    for i in range(len(file_updated)):
+    if not lines_orig:
+        print("Error: File '{}' is empty.".format(file_orig))
+        sys.exit(1)
+
+    if not lines_updated:
+        print("Error: File '{}' is empty.".format(file_updated))
+        sys.exit(1)
+
+    for i in range(len(lines_updated)):
         res = diff_partial_update(lines_orig, lines_updated[:i])
-        print(res)
+        print_diff(res)
         input()
+
+
+def print_diff(diff):
+    """Print the diff in a more readable format."""
+    print("====================================")
+    print(diff)
+    print("====================================")
 
 
 def create_progress_bar(percentage):
@@ -47,9 +72,6 @@ def diff_partial_update(lines_orig, lines_updated, final=False, fname=None):
     partially complete update.
     """
 
-    # dump(lines_orig)
-    # dump(lines_updated)
-
     assert_newlines(lines_orig)
     assert_newlines(lines_orig)
 
@@ -60,14 +82,10 @@ def diff_partial_update(lines_orig, lines_updated, final=False, fname=None):
     else:
         last_non_deleted = find_last_non_deleted(lines_orig, lines_updated)
 
-    # dump(last_non_deleted)
     if last_non_deleted is None:
         return ""
 
-    if num_orig_lines:
-        pct = last_non_deleted * 100 / num_orig_lines
-    else:
-        pct = 50
+    pct = last_non_deleted * 100 / num_orig_lines
     bar = create_progress_bar(pct)
     bar = f" {last_non_deleted:3d} / {num_orig_lines:3d} lines [{bar}] {pct:3.0f}%\n"
 
@@ -98,32 +116,14 @@ def diff_partial_update(lines_orig, lines_updated, final=False, fname=None):
 
     show += f"{backticks}\n\n"
 
-    # print(diff)
-
     return show
 
 
 def find_last_non_deleted(lines_orig, lines_updated):
-    diff = list(difflib.ndiff(lines_orig, lines_updated))
-
-    num_orig = 0
-    last_non_deleted_orig = None
-
-    for line in diff:
-        # print(f"{num_orig:2d} {num_updated:2d} {line}", end="")
-        code = line[0]
-        if code == " ":
-            num_orig += 1
-            last_non_deleted_orig = num_orig
-        elif code == "-":
-            # line only in orig
-            num_orig += 1
-        elif code == "+":
-            # line only in updated
-            pass
-
-    return last_non_deleted_orig
-
-
-if __name__ == "__main__":
-    main()
+    """
+    Find the last non-deleted line in the original lines.
+    """
+    for i, (line_orig, line_updated) in enumerate(zip(lines_orig, lines_updated)):
+        if line_orig != line_updated:
+            return i
+    return
