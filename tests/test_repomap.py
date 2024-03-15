@@ -9,8 +9,15 @@ from tests.utils import IgnorantTemporaryDirectory
 
 
 class TestRepoMap(unittest.TestCase):
+    def setUp(self):
+        self.io = InputOutput()
+        self.temp_dir = IgnorantTemporaryDirectory()
+
+    def tearDown(self):
+        del self.repo_map
+        self.temp_dir.cleanup()
+
     def test_get_repo_map(self):
-        # Create a temporary directory with sample files for testing
         test_files = [
             "test_file1.py",
             "test_file2.py",
@@ -18,27 +25,18 @@ class TestRepoMap(unittest.TestCase):
             "test_file4.json",
         ]
 
-        with IgnorantTemporaryDirectory() as temp_dir:
-            for file in test_files:
-                with open(os.path.join(temp_dir, file), "w") as f:
-                    f.write("")
+        for file in test_files:
+            with open(os.path.join(self.temp_dir.path, file), "w") as f:
+                f.write("")
 
-            io = InputOutput()
-            repo_map = RepoMap(root=temp_dir, io=io)
-            other_files = [os.path.join(temp_dir, file) for file in test_files]
-            result = repo_map.get_repo_map([], other_files)
+        self.repo_map = RepoMap(root=self.temp_dir.path, io=self.io)
+        other_files = [os.path.join(self.temp_dir.path, file) for file in test_files]
+        result = self.repo_map.get_repo_map([], other_files)
 
-            # Check if the result contains the expected tags map
-            self.assertIn("test_file1.py", result)
-            self.assertIn("test_file2.py", result)
-            self.assertIn("test_file3.md", result)
-            self.assertIn("test_file4.json", result)
-
-            # close the open cache files, so Windows won't error
-            del repo_map
+        for file in test_files:
+            self.assertIn(file, result)
 
     def test_get_repo_map_with_identifiers(self):
-        # Create a temporary directory with a sample Python file containing identifiers
         test_file1 = "test_file_with_identifiers.py"
         file_content1 = """\
 class MyClass:
@@ -61,39 +59,24 @@ print(my_function(3, 4))
         test_file3 = "test_file_pass.py"
         file_content3 = "pass"
 
-        with IgnorantTemporaryDirectory() as temp_dir:
-            with open(os.path.join(temp_dir, test_file1), "w") as f:
-                f.write(file_content1)
+        for file, content in [(test_file1, file_content1), (test_file2, file_content2), (test_file3, file_content3)]:
+            with open(os.path.join(self.temp_dir.path, file), "w") as f:
+                f.write(content)
 
-            with open(os.path.join(temp_dir, test_file2), "w") as f:
-                f.write(file_content2)
+        self.repo_map = RepoMap(root=self.temp_dir.path, io=self.io)
+        other_files = [os.path.join(self.temp_dir.path, file) for file in (test_file1, test_file2, test_file3)]
+        result = self.repo_map.get_repo_map([], other_files)
 
-            with open(os.path.join(temp_dir, test_file3), "w") as f:
-                f.write(file_content3)
-
-            io = InputOutput()
-            repo_map = RepoMap(root=temp_dir, io=io)
-            other_files = [
-                os.path.join(temp_dir, test_file1),
-                os.path.join(temp_dir, test_file2),
-                os.path.join(temp_dir, test_file3),
-            ]
-            result = repo_map.get_repo_map([], other_files)
-
-            # Check if the result contains the expected tags map with identifiers
-            self.assertIn("test_file_with_identifiers.py", result)
-            self.assertIn("MyClass", result)
-            self.assertIn("my_method", result)
-            self.assertIn("my_function", result)
-            self.assertIn("test_file_pass.py", result)
-
-            # close the open cache files, so Windows won't error
-            del repo_map
+        self.assertIn(test_file1, result)
+        self.assertIn("MyClass", result)
+        self.assertIn("my_method", result)
+        self.assertIn("my_function", result)
+        self.assertIn(test_file3, result)
 
     def test_check_for_ctags_failure(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = Exception("ctags not found")
-            repo_map = RepoMap(io=InputOutput())
+            repo_map = RepoMap(io=self.io)
             self.assertFalse(repo_map.has_ctags)
 
     def test_check_for_ctags_success(self):
@@ -110,11 +93,10 @@ print(my_function(3, 4))
                     b' status = main()$/", "kind": "variable"}'
                 ),
             ]
-            repo_map = RepoMap(io=InputOutput())
+            repo_map = RepoMap(io=self.io)
             self.assertTrue(repo_map.has_ctags)
 
     def test_get_repo_map_without_ctags(self):
-        # Create a temporary directory with a sample Python file containing identifiers
         test_files = [
             "test_file_without_ctags.py",
             "test_file1.txt",
@@ -125,23 +107,18 @@ print(my_function(3, 4))
             "test_file6.js",
         ]
 
-        with IgnorantTemporaryDirectory() as temp_dir:
-            for file in test_files:
-                with open(os.path.join(temp_dir, file), "w") as f:
-                    f.write("")
+        for file in test_files:
+            with open(os.path.join(self.temp_dir.path, file), "w") as f:
+                f.write("")
 
-            repo_map = RepoMap(root=temp_dir, io=InputOutput())
-            repo_map.has_ctags = False  # force it off
+        self.repo_map = RepoMap(root=self.temp_dir.path, io=self.io)
+        self.repo_map.has_ctags = False
 
-            other_files = [os.path.join(temp_dir, file) for file in test_files]
-            result = repo_map.get_repo_map([], other_files)
+        other_files = [os.path.join(self.temp_dir.path, file) for file in test_files]
+        result = self.repo_map.get_repo_map([], other_files)
 
-            # Check if the result contains each specific file in the expected tags map without ctags
-            for file in test_files:
-                self.assertIn(file, result)
-
-            # close the open cache files, so Windows won't error
-            del repo_map
+        for file in test_files:
+            self.assertIn(file, result)
 
 
 if __name__ == "__main__":
