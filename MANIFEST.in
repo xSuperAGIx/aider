@@ -1,1 +1,6 @@
-include requirements.txt
+# Use pip to install the dependencies from requirements.txt
+pip install -r requirements.txt
+
+# Alternatively, you can install the dependencies directly from the command line
+# by listing them individually, like so:
+# pip install flask requests
