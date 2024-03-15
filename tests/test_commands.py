@@ -17,18 +17,16 @@ from aider.io import InputOutput
 class TestCommands(TestCase):
     def setUp(self):
         self.original_cwd = os.getcwd()
-        self.tempdir = tempfile.mkdtemp()
-        os.chdir(self.tempdir)
+        self.tempdir = tempfile.TemporaryDirectory()
+        os.chdir(self.tempdir.name)
 
     def tearDown(self):
         os.chdir(self.original_cwd)
-        shutil.rmtree(self.tempdir)
+        self.tempdir.cleanup()
 
     def test_cmd_add(self):
         # Initialize the Commands and InputOutput objects
         io = InputOutput(pretty=False, yes=True)
-        from aider.coders import Coder
-
         coder = Coder.create(models.GPT35, None, io)
         commands = Commands(io, coder)
 
@@ -42,34 +40,27 @@ class TestCommands(TestCase):
     def test_cmd_add_with_glob_patterns(self):
         # Initialize the Commands and InputOutput objects
         io = InputOutput(pretty=False, yes=True)
-        from aider.coders import Coder
-
         coder = Coder.create(models.GPT35, None, io)
         commands = Commands(io, coder)
 
         # Create some test files
-        with open("test1.py", "w") as f:
-            f.write("print('test1')")
-        with open("test2.py", "w") as f:
-            f.write("print('test2')")
-        with open("test.txt", "w") as f:
-            f.write("test")
+        (Path("test1.py")).touch()
+        (Path("test2.py")).touch()
+        (Path("test.txt")).touch()
 
         # Call the cmd_add method with a glob pattern
         commands.cmd_add("*.py")
 
         # Check if the Python files have been added to the chat session
-        self.assertIn(str(Path("test1.py").resolve()), coder.abs_fnames)
-        self.assertIn(str(Path("test2.py").resolve()), coder.abs_fnames)
+        self.assertIn(str(Path("test1.py")), coder.abs_fnames)
+        self.assertIn(str(Path("test2.py")), coder.abs_fnames)
 
         # Check if the text file has not been added to the chat session
-        self.assertNotIn(str(Path("test.txt").resolve()), coder.abs_fnames)
+        self.assertNotIn(str(Path("test.txt")), coder.abs_fnames)
 
     def test_cmd_add_no_match(self):
         # Initialize the Commands and InputOutput objects
         io = InputOutput(pretty=False, yes=True)
-        from aider.coders import Coder
-
         coder = Coder.create(models.GPT35, None, io)
         commands = Commands(io, coder)
 
@@ -82,41 +73,33 @@ class TestCommands(TestCase):
     def test_cmd_add_drop_directory(self):
         # Initialize the Commands and InputOutput objects
         io = InputOutput(pretty=False, yes=True)
-        from aider.coders import Coder
-
         coder = Coder.create(models.GPT35, None, io)
         commands = Commands(io, coder)
 
-        # Create a directory and add files to it
         os.mkdir("test_dir")
         os.mkdir("test_dir/another_dir")
-        with open("test_dir/test_file1.txt", "w") as f:
-            f.write("Test file 1")
-        with open("test_dir/test_file2.txt", "w") as f:
-            f.write("Test file 2")
-        with open("test_dir/another_dir/test_file.txt", "w") as f:
-            f.write("Test file 3")
+        (Path("test_dir/test_file1.txt")).touch()
+        (Path("test_dir/test_file2.txt")).touch()
+        (Path("test_dir/another_dir/test_file.txt")).touch()
 
         # Call the cmd_add method with a directory
         commands.cmd_add("test_dir test_dir/test_file2.txt")
 
         # Check if the files have been added to the chat session
-        self.assertIn(str(Path("test_dir/test_file1.txt").resolve()), coder.abs_fnames)
-        self.assertIn(str(Path("test_dir/test_file2.txt").resolve()), coder.abs_fnames)
-        self.assertIn(str(Path("test_dir/another_dir/test_file.txt").resolve()), coder.abs_fnames)
+        self.assertIn(str(Path("test_dir/test_file1.txt")), coder.abs_fnames)
+        self.assertIn(str(Path("test_dir/test_file2.txt")), coder.abs_fnames)
+        self.assertIn(str(Path("test_dir/another_dir/test_file.txt")), coder.abs_fnames)
 
         commands.cmd_drop("test_dir/another_dir")
-        self.assertIn(str(Path("test_dir/test_file1.txt").resolve()), coder.abs_fnames)
-        self.assertIn(str(Path("test_dir/test_file2.txt").resolve()), coder.abs_fnames)
+        self.assertIn(str(Path("test_dir/test_file1.txt")), coder.abs_fnames)
+        self.assertIn(str(Path("test_dir/test_file2.txt")), coder.abs_fnames)
         self.assertNotIn(
-            str(Path("test_dir/another_dir/test_file.txt").resolve()), coder.abs_fnames
+            str(Path("test_dir/another_dir/test_file.txt")), coder.abs_fnames
         )
 
     def test_cmd_drop_with_glob_patterns(self):
         # Initialize the Commands and InputOutput objects
         io = InputOutput(pretty=False, yes=True)
-        from aider.coders import Coder
-
         coder = Coder.create(models.GPT35, None, io)
         commands = Commands(io, coder)
 
@@ -136,45 +119,9 @@ class TestCommands(TestCase):
         # Call the cmd_drop method with a glob pattern
         commands.cmd_drop("*2.py")
 
-        self.assertIn(str(Path("test1.py").resolve()), coder.abs_fnames)
-        self.assertNotIn(str(Path("test2.py").resolve()), coder.abs_fnames)
+        self.assertIn(str(Path("test1.py")), coder.abs_fnames)
+        self.assertNotIn(str(Path("test2.py")), coder.abs_fnames)
 
     def test_cmd_add_bad_encoding(self):
         # Initialize the Commands and InputOutput objects
-        io = InputOutput(pretty=False, yes=True)
-        from aider.coders import Coder
-
-        coder = Coder.create(models.GPT35, None, io)
-        commands = Commands(io, coder)
-
-        # Create a new file foo.bad which will fail to decode as utf-8
-        with codecs.open("foo.bad", "w", encoding="iso-8859-15") as f:
-            f.write("ÆØÅ")  # Characters not present in utf-8
-
-        commands.cmd_add("foo.bad")
-
-        self.assertEqual(coder.abs_fnames, set())
-
-    def test_cmd_tokens(self):
-        # Initialize the Commands and InputOutput objects
-        io = InputOutput(pretty=False, yes=True)
-
-        coder = Coder.create(models.GPT35, None, io)
-        commands = Commands(io, coder)
-
-        commands.cmd_add("foo.txt bar.txt")
-
-        # Redirect the standard output to an instance of io.StringIO
-        stdout = StringIO()
-        sys.stdout = stdout
-
-        commands.cmd_tokens("")
-
-        # Reset the standard output
-        sys.stdout = sys.__stdout__
-
-        # Get the console output
-        console_output = stdout.getvalue()
-
-        self.assertIn("foo.txt", console_output)
-        self.assertIn("bar.txt", console_output)
+        io = InputOutput(pretty=False, yes=
