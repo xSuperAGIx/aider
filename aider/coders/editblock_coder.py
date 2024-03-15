@@ -2,52 +2,46 @@ import math
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
-from .base_coder import Coder
-from .editblock_prompts import EditBlockPrompts
+import editblock_prompts
+import io_utils
 
 
-class EditBlockCoder(Coder):
-    def __init__(self, *args, **kwargs):
-        self.gpt_prompts = EditBlockPrompts()
+class EditBlockCoder(io_utils.Coder):
+    def __init__(self, *args: Any, **kwargs: Any):
+        self.gpt_prompts = editblock_prompts.EditBlockPrompts()
         super().__init__(*args, **kwargs)
 
-    def update_cur_messages(self, content, edited):
-        self.cur_messages += [dict(role="assistant", content=content)]
+    def update_cur_messages(self, content: str, edited: bool):
+        self.cur_messages.append({"role": "assistant", "content": content})
 
-    def update_files(self):
+    def update_files(self) -> List[str]:
         content = self.partial_response_content
 
-        # might raise ValueError for malformed ORIG/UPD blocks
-        edits = list(find_original_update_blocks(content))
-
-        edited = set()
-        for path, original, updated in edits:
+        edited_files = []
+        for path, original, updated in find_original_update_blocks(content):
             full_path = self.allowed_to_edit(path)
             if not full_path:
                 continue
+
             content = self.io.read_text(full_path)
             content = do_replace(full_path, content, original, updated)
             if content:
                 self.io.write_text(full_path, content)
-                edited.add(path)
+                edited_files.append(path)
                 continue
+
             self.io.tool_error(f"Failed to apply edit to {path}")
 
-        return edited
+        return edited_files
 
 
-def try_dotdotdots(whole, part, replace):
-    """
-    See if the edit block has ... lines.
-    If not, return none.
-
-    If yes, try and do a perfect edit with the ... chunks.
-    If there's a mismatch or otherwise imperfect edit, raise ValueError.
-
-    If perfect edit succeeds, return the updated whole.
-    """
-
+def try_dotdotdots(whole: str, part: str, replace: str) -> Optional[str]:
     dots_re = re.compile(r"(^\s*\.\.\.\n)", re.MULTILINE | re.DOTALL)
 
     part_pieces = re.split(dots_re, part)
@@ -57,10 +51,8 @@ def try_dotdotdots(whole, part, replace):
         raise ValueError("Unpaired ... in edit block")
 
     if len(part_pieces) == 1:
-        # no dots in this edit block, just return None
-        return
+        return None
 
-    # Compare odd strings in part_pieces and replace_pieces
     all_dots_match = all(part_pieces[i] == replace_pieces[i] for i in range(1, len(part_pieces), 2))
 
     if not all_dots_match:
@@ -90,14 +82,11 @@ def try_dotdotdots(whole, part, replace):
     return whole
 
 
-def replace_part_with_missing_leading_whitespace(whole, part, replace):
+def replace_part_with_missing_leading_whitespace(whole: str, part: str, replace: str) -> Optional[str]:
     whole_lines = whole.splitlines()
     part_lines = part.splitlines()
     replace_lines = replace.splitlines()
 
-    # If all lines in the part start with whitespace, then honor it.
-    # But GPT often outdents the part and replace blocks completely,
-    # thereby discarding the actual leading whitespace in the file.
     if all((not pline or pline[0].isspace()) for pline in part_lines):
         return
 
@@ -126,7 +115,7 @@ def replace_part_with_missing_leading_whitespace(whole, part, replace):
     return None
 
 
-def replace_most_similar_chunk(whole, part, replace):
+def replace_most_similar_chunk(whole: str, part: str, replace: str) -> Optional[str]:
     res = replace_part_with_missing_leading_whitespace(whole, part, replace)
     if res:
         return res
@@ -164,178 +153,4 @@ def replace_most_similar_chunk(whole, part, replace):
 
             if similarity > max_similarity and similarity:
                 max_similarity = similarity
-                most_similar_chunk_start = i
-                most_similar_chunk_end = i + length
-
-    if max_similarity < similarity_thresh:
-        return
-
-    replace_lines = replace.splitlines()
-
-    modified_whole = (
-        whole_lines[:most_similar_chunk_start]
-        + replace_lines
-        + whole_lines[most_similar_chunk_end:]
-    )
-    modified_whole = "\n".join(modified_whole)
-
-    if whole.endswith("\n"):
-        modified_whole += "\n"
-
-    return modified_whole
-
-
-def strip_quoted_wrapping(res, fname=None, fence=None):
-    """
-    Given an input string which may have extra "wrapping" around it, remove the wrapping.
-    For example:
-
-    filename.ext
-    ```
-    We just want this content
-    Not the filename and triple quotes
-    ```
-    """
-    if not res:
-        return res
-
-    if not fence:
-        fence = ("```", "```")
-
-    res = res.splitlines()
-
-    if fname and res[0].strip().endswith(Path(fname).name):
-        res = res[1:]
-
-    if res[0].startswith(fence[0]) and res[-1].startswith(fence[1]):
-        res = res[1:-1]
-
-    res = "\n".join(res)
-    if res and res[-1] != "\n":
-        res += "\n"
-
-    return res
-
-
-def do_replace(fname, content, before_text, after_text, fence=None):
-    before_text = strip_quoted_wrapping(before_text, fname, fence)
-    after_text = strip_quoted_wrapping(after_text, fname, fence)
-    fname = Path(fname)
-
-    # does it want to make a new file?
-    if not fname.exists() and not before_text.strip():
-        fname.touch()
-        content = ""
-
-    if content is None:
-        return
-
-    if not before_text.strip():
-        # append to existing file, or start a new file
-        new_content = content + after_text
-    else:
-        new_content = replace_most_similar_chunk(content, before_text, after_text)
-
-    return new_content
-
-
-ORIGINAL = "<<<<<<< ORIGINAL"
-DIVIDER = "======="
-UPDATED = ">>>>>>> UPDATED"
-
-separators = "|".join([ORIGINAL, DIVIDER, UPDATED])
-
-split_re = re.compile(r"^((?:" + separators + r")[ ]*\n)", re.MULTILINE | re.DOTALL)
-
-
-def find_original_update_blocks(content):
-    # make sure we end with a newline, otherwise the regex will miss <<UPD on the last line
-    if not content.endswith("\n"):
-        content = content + "\n"
-
-    pieces = re.split(split_re, content)
-
-    pieces.reverse()
-    processed = []
-
-    # Keep using the same filename in cases where GPT produces an edit block
-    # without a filename.
-    current_filename = None
-    try:
-        while pieces:
-            cur = pieces.pop()
-
-            if cur in (DIVIDER, UPDATED):
-                processed.append(cur)
-                raise ValueError(f"Unexpected {cur}")
-
-            if cur.strip() != ORIGINAL:
-                processed.append(cur)
-                continue
-
-            processed.append(cur)  # original_marker
-
-            filename = processed[-2].splitlines()[-1].strip()
-            try:
-                if not len(filename) or "`" in filename:
-                    filename = processed[-2].splitlines()[-2].strip()
-                if not len(filename) or "`" in filename:
-                    if current_filename:
-                        filename = current_filename
-                    else:
-                        raise ValueError(
-                            f"Bad/missing filename. It should go right above {ORIGINAL}"
-                        )
-            except IndexError:
-                if current_filename:
-                    filename = current_filename
-                else:
-                    raise ValueError(f"Bad/missing filename. It should go right above {ORIGINAL}")
-
-            current_filename = filename
-
-            original_text = pieces.pop()
-            processed.append(original_text)
-
-            divider_marker = pieces.pop()
-            processed.append(divider_marker)
-            if divider_marker.strip() != DIVIDER:
-                raise ValueError(f"Expected {DIVIDER}")
-
-            updated_text = pieces.pop()
-            processed.append(updated_text)
-
-            updated_marker = pieces.pop()
-            processed.append(updated_marker)
-            if updated_marker.strip() != UPDATED:
-                raise ValueError(f"Expected {UPDATED}")
-
-            yield filename, original_text, updated_text
-    except ValueError as e:
-        processed = "".join(processed)
-        err = e.args[0]
-        raise ValueError(f"{processed}\n^^^ {err}")
-    except IndexError:
-        processed = "".join(processed)
-        raise ValueError(f"{processed}\n^^^ Incomplete ORIGINAL/UPDATED block.")
-    except Exception:
-        processed = "".join(processed)
-        raise ValueError(f"{processed}\n^^^ Error parsing ORIGINAL/UPDATED block.")
-
-
-if __name__ == "__main__":
-    edit = """
-Here's the change:
-
-```text
-foo.txt
-<<<<<<< ORIGINAL
-Two
-=======
-Tooooo
->>>>>>> UPDATED
-```
-
-Hope you like it!
-"""
-    print(list(find_original_update_blocks(edit)))
+                most
